@@ -1,6 +1,3 @@
-#include <bom/io/configuration.h>
-#include <bom/io/cf.h>
-#include <bom/io/nc.h>
 #include <bom/io/odim.h>
 #include <bom/radar/beam_propagation.h>
 #include <bom/array2.h>
@@ -11,18 +8,12 @@
 #include <bom/trace.h>
 
 #include <algorithm>
-#include <ctime>
 #include <filesystem>
-#include <fstream>
 #include <getopt.h>
-#include <iomanip>
-#include <iostream>
 #include <math.h>
 #include <numeric>
-#include <sstream>
 #include <string>
 #include <thread>
-#include <unordered_map>
 #include <vector>
 
 using namespace bom;
@@ -197,6 +188,7 @@ auto compute_eth(radarset dset) -> array2f{
 
   auto range_base = dset.dbzh.sweeps[sorted_index[0]].bins;
 
+  // Get the apparent elevation angle at which the ETH is found.
   for(size_t k = 0; k < sorted_index.size() - 1; k ++){
     auto thetab = dset.elevation[sorted_index[k]];  // Ref - following Laks conventions.
     auto thetaa = dset.elevation[sorted_index[k+1]];  // Iter
@@ -225,10 +217,10 @@ auto compute_eth(radarset dset) -> array2f{
     }
   }
 
+  // Convert the apparent elevation angle into meters MSL and correct for 4/3 Earth radius model.
   for(size_t i = 0; i < nbins; i ++){
     for(size_t j = 0; j < nrays; j ++){
-      if(eth[j][i] ==  0) continue;      
-      // 4/3 Earth radius model.
+      if(eth[j][i] ==  0) continue;
       double r = range_base[i].ground_range;
       eth[j][i] = sqrt(r * r + std::pow(4. / 3. * ea, 2) + 2 * r * 4./3. * ea * sin(M_PI * eth[j][i] / 180.)) - 4. / 3. * ea;
     }
