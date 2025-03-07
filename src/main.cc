@@ -52,14 +52,15 @@ constexpr auto usage_string =
 R"(Echo-top heights of radar volume at multiple reflectivity
 
 usage:
-  echotop [options] vol.h5 out.nc
+  echotop [options] vol.h5
 
 available options:
   -h, --help
       Show this message and exit
 
-  -g, --generate
-      Output a sample configuration file and exit
+  -r, --refl
+      Reflectivity threshold for the echo top heights. Can be a single value
+      or a list of values separated by a coma (e.g.: -r 1,5.5,10)
 
   -t, --trace=level
       Set logging level [log]
@@ -71,12 +72,13 @@ constexpr struct option long_options[] =
 {
     { "help",     no_argument,       0, 'h' }
   , { "generate", no_argument,       0, 'g' }
+  , { "refl",     required_argument, 0, 'r' }
   , { "trace",    required_argument, 0, 't' }
   , { 0, 0, 0, 0 }
 };
 
 template<typename T>
-std::vector<size_t> argsort(const std::vector<T> &array) {
+std::vector<size_t> argsort(const std::vector<T> &array) {  // From stackoverflow.
   std::vector<size_t> indices(array.size());
   std::iota(indices.begin(), indices.end(), 0);
   std::sort(indices.begin(), indices.end(),
@@ -176,10 +178,9 @@ auto run_search(const array1<bin_info>& bins, float target) -> size_t{
   return left;
 }
 
-auto compute_eth(radarset dset) -> array2f{
-  float eth_thld = 10.;
-  float noise_thld = eth_thld-5.f;
+auto compute_eth(radarset dset, float dbz_thld) -> array2f{
   const double ea = 6371000; // Earth radius in meters.
+  float noise_thld = dbz_thld < -2.f ? dbz_thld - 2. : -2.f;
   auto sorted_index = argsort(dset.elevation);
   const auto nbins = dset.dbzh.sweeps[sorted_index[0]].bins.size();
   const auto nrays = dset.dbzh.sweeps[sorted_index[0]].rays.size();
@@ -206,9 +207,9 @@ auto compute_eth(radarset dset) -> array2f{
         auto refa = refl_iter[j][i_a];
         if(std::isnan(refa) || (refa < noise_thld)) refa = noise_thld;
 
-        if((refb > eth_thld) && (refa < eth_thld)){
+        if((refb > dbz_thld) && (refa < dbz_thld)){
           if(thetaa < 90){
-            eth[j][i] = (eth_thld - refa) * (thetab - thetaa) / (refb - refa) + thetab;
+            eth[j][i] = (dbz_thld - refa) * (thetab - thetaa) / (refb - refa) + thetab;
           } else {
             eth[j][i] = thetab + 0.5;
           }
@@ -222,38 +223,61 @@ auto compute_eth(radarset dset) -> array2f{
     for(size_t j = 0; j < nrays; j ++){
       if(eth[j][i] ==  0) continue;
       double r = range_base[i].ground_range;
-      eth[j][i] = sqrt(r * r + std::pow(4. / 3. * ea, 2) + 2 * r * 4./3. * ea * sin(M_PI * eth[j][i] / 180.)) - 4. / 3. * ea;
+      eth[j][i] = sqrt(r * r + 16./9. * ea * ea + 2 * r * 4./3. * ea * sin(M_PI * eth[j][i] / 180.)) - 4./3. * ea;
     }
   }
 
   return eth;
 }
 
-void process_file(const std::filesystem::path& path){
+std::string create_eth_label(float value) {
+  std::ostringstream oss;
+  oss << "ETH_" << value;
+  return oss.str();
+}
+
+void parse_floats(const std::string &s, std::vector<float> &v) {
+  std::stringstream ss(s);
+  std::string item;
+  while (std::getline(ss, item, ',')) {
+      v.push_back(std::stof(item));
+  }
+}
+
+void process_file(const std::filesystem::path& path, std::vector<float> r_values){
   std::cout << "Starting process." << std::endl;
   auto dset = read_volume(path, "DBZH");
-  auto eth = compute_eth(dset);
-
   auto sorted_index = argsort(dset.elevation);
   const auto nbins = dset.dbzh.sweeps[sorted_index[0]].bins.size();
   const auto nrays = dset.dbzh.sweeps[sorted_index[0]].rays.size();
   size_t dims[2] = {nrays, nbins};
+  vector<array2f> eth_lst;
+
+  for(float dbz_thld : r_values){
+    std::cout << "Computing " << dbz_thld << "dB echo top heights.\n";
+    auto eth = compute_eth(dset, dbz_thld);
+    eth_lst.push_back(eth);
+  }
 
   io::odim::polar_volume vol_odim{path, io_mode::read_write};
   auto scan_odim = vol_odim.scan_open(sorted_index[0]);
-  auto data = scan_odim.data_append(io::odim::data::data_type::f32, 2, dims);
-  data.write(eth.data());
-  data.set_quantity("ETH");
-  data.set_nodata(-1.);
-  data.set_undetect(-1.);
-  data.set_gain(1);
-  data.set_offset(0);
-
+  for(size_t i=0; i<r_values.size(); i++){
+    auto dbz_thld = r_values[i];
+    auto data = scan_odim.data_append(io::odim::data::data_type::f32, 2, dims);
+    data.write(eth_lst[i].data());
+    data.set_quantity(create_eth_label(dbz_thld));
+    data.set_nodata(-1.);
+    data.set_undetect(-1.);
+    data.set_gain(1);
+    data.set_offset(0);
+    std::cout << dbz_thld << "dB ETH written.\n";
+  }
   std::cout << "Process done." << std::endl;
 }
 
 int main(int argc, char* argv[]){
   try{
+    std::vector<float> r_values;
     // process command line
     while (true){
       int option_index = 0;
@@ -263,10 +287,10 @@ int main(int argc, char* argv[]){
       switch (c){
         case 'h':
           std::cout << usage_string;
-          return EXIT_SUCCESS;
-        case 'g':
-          std::cout << usage_string;
-          return EXIT_SUCCESS;
+          return EXIT_SUCCESS;        
+        case 'r':
+          parse_floats(optarg, r_values);
+          break;
         case 't':
           trace::set_min_level(from_string<trace::level>(optarg));
           break;
@@ -280,8 +304,9 @@ int main(int argc, char* argv[]){
     std::cerr << "missing required parameter\n" << try_again;
     return EXIT_FAILURE;
   }
+  if(r_values.size() == 0) r_values.push_back(0.);  // Default value of 0 dB if none provided.
 
-  process_file(argv[optind]);
+  process_file(argv[optind], r_values);
   }catch (std::exception& err){
     trace::error("fatal exception: {}", format_exception(err));
     return EXIT_FAILURE;
@@ -289,6 +314,4 @@ int main(int argc, char* argv[]){
     trace::error("fatal exception: (unknown exception)");
     return EXIT_FAILURE;
   }
-
-  return EXIT_SUCCESS;
 }
