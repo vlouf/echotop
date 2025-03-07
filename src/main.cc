@@ -188,6 +188,7 @@ auto run_search(const array1<bin_info>& bins, float target) -> size_t{
 auto compute_eth(radarset dset) -> array2f{
   float eth_thld = 10.;
   float noise_thld = eth_thld-5.f;
+  const double ea = 6371000; // Earth radius in meters.
   auto sorted_index = argsort(dset.elevation);
   const auto nbins = dset.dbzh.sweeps[sorted_index[0]].bins.size();
   const auto nrays = dset.dbzh.sweeps[sorted_index[0]].rays.size();
@@ -226,11 +227,12 @@ auto compute_eth(radarset dset) -> array2f{
 
   for(size_t i = 0; i < nbins; i ++){
     for(size_t j = 0; j < nrays; j ++){
-      eth[j][i] = range_base[i].ground_range * sin(M_PI * eth[j][i] / 180.);
+      if(eth[j][i] ==  0) continue;      
+      // 4/3 Earth radius model.
+      double r = range_base[i].ground_range;
+      eth[j][i] = sqrt(r * r + std::pow(4. / 3. * ea, 2) + 2 * r * 4./3. * ea * sin(M_PI * eth[j][i] / 180.)) - 4. / 3. * ea;
     }
   }
-
-  // TODO: Correct for earth' sphericity.
 
   return eth;
 }
