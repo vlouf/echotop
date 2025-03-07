@@ -1,0 +1,34 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "name": "Debug echotop",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/echotop",
+            "args": ["test/66_20250307_015000.pvol.h5"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": true,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "CMake: build",
+            "miDebuggerPath": "/usr/bin/gdb", // Adjust this path if GDB is located elsewhere
+            "logging": {
+                "moduleLoad": false,
+                "trace": true,
+                "engineLogging": true,
+                "programOutput": true,
+                "exceptions": true
+            }
+        }
+    ]
+}
